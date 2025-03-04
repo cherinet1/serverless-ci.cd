@@ -1,0 +1,122 @@
+# Azure DevOps Pipeline for Serverless Website
+# Deploys to Azure Static Web Apps in multiple environments
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+
+variables:
+  # Node version
+  nodeVersion: '18.x'
+
+stages:
+- stage: Build
+  displayName: 'Build Stage'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build Application'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Install Node.js'
+      inputs:
+        versionSpec: '$(nodeVersion)'
+    
+    - script: |
+        npm ci
+      displayName: 'Install Dependencies'
+    
+    - script: |
+        npm run lint
+      displayName: 'Run Linting'
+    
+    - script: |
+        npm run build
+      displayName: 'Build Application'
+    
+    - task: ArchiveFiles@2
+      displayName: 'Archive Build Files'
+      inputs:
+        rootFolderOrFile: 'dist'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/website.zip'
+    
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Build Artifacts'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'website'
+
+- stage: DeployToDev
+  displayName: 'Deploy to Development'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+  jobs:
+  - deployment: DeployDev
+    displayName: 'Deploy to Dev Environment'
+    environment: 'Development'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureStaticWebApp@0
+            displayName: 'Deploy to Azure Static Web App - Dev'
+            inputs:
+              app_location: 'dist'
+              api_location: 'api'
+              output_location: ''
+              azure_static_web_apps_api_token: '$(AZURE_STATIC_WEB_APP_DEV_TOKEN)'
+              deployment_environment: 'development'
+
+- stage: DeployToTest
+  displayName: 'Deploy to Test'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployTest
+    displayName: 'Deploy to Test Environment'
+    environment: 'Test'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureStaticWebApp@0
+            displayName: 'Deploy to Azure Static Web App - Test'
+            inputs:
+              app_location: 'dist'
+              api_location: 'api'
+              output_location: ''
+              azure_static_web_apps_api_token: '$(AZURE_STATIC_WEB_APP_TEST_TOKEN)'
+              deployment_environment: 'test'
+
+- stage: DeployToProd
+  displayName: 'Deploy to Production'
+  dependsOn: DeployToTest
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployProd
+    displayName: 'Deploy to Production Environment'
+    environment: 'Production'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureStaticWebApp@0
+            displayName: 'Deploy to Azure Static Web App - Prod'
+            inputs:
+              app_location: 'dist'
+              api_location: 'api'
+              output_location: ''
+              azure_static_web_apps_api_token: '$(AZURE_STATIC_WEB_APP_PROD_TOKEN)'
+              deployment_environment: 'production'
